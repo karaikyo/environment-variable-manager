@@ -8,6 +8,8 @@ explicit `[[test]]` entries. Unclassified new targets fail CI until explicitly
 assigned to the headless group or the controlled-acceptance group. The controlled group currently contains
 `cli_observation`, `history_native`, `native_lifecycle`, `recovery_process`,
 and `system_helper`; these are not silently reported as passed in CI.
+CI also verifies that inventory probes refuse pre-existing directories and preserve
+their contents. Cleanup removes only fixtures successfully reserved by that run.
 
 Push a tag matching Cargo.toml (for example v0.1.3 after updating the package and
 lockfile versions) to run the Windows release workflow. It tests headless-compatible
