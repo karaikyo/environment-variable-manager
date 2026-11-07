@@ -2,21 +2,21 @@
 
 Every push to `main` and pull request targeting `main` runs Windows CI: Rust formatting,
 Clippy, a safety-reviewed list of headless integration suites, and packaging checks.
-`scripts/ci-test-targets.ps1` audits **every** `tests/*.rs` target. Unclassified
-new test files fail CI until explicitly assigned to the headless group or the
-controlled-acceptance group. The controlled group currently contains
+`scripts/ci-test-targets.ps1` uses `cargo metadata` to audit every Cargo
+integration-test target, including nested `tests/<name>/main.rs` targets and
+explicit `[[test]]` entries. Unclassified new targets fail CI until explicitly
+assigned to the headless group or the controlled-acceptance group. The controlled group currently contains
 `cli_observation`, `history_native`, `native_lifecycle`, `recovery_process`,
 and `system_helper`; these are not silently reported as passed in CI.
-
-
 
 Push a tag matching Cargo.toml (for example v0.1.3 after updating the package and
 lockfile versions) to run the Windows release workflow. It tests headless-compatible
 functional suites on Windows Server 2022, checks the portable archive, scans it for
 personal paths/credential patterns, and publishes a preview release with ZIP/SHA256.
 Tag builds must use a version matching Cargo.toml and a commit reachable from
-`main`. The publish job independently validates the uploaded ZIP against its
-SHA-256 sidecar. Its release notes come from the matching numbered section in
+`main`. The release inspection hashes the executable directly from inside the ZIP
+and compares it with the built binary and package metadata. The publish job
+independently validates the uploaded ZIP against its SHA-256 sidecar. Its release notes come from the matching numbered section in
 CHANGELOG.md and include the exact tagged source commit. Add the version heading
 (e.g. `## [0.1.3] - YYYY-MM-DD`) before tagging or publication will fail.
 Official actions are pinned to commit hashes. Release write permission belongs only
