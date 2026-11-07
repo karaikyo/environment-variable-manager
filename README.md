@@ -1,8 +1,9 @@
 # Environment Manager
 
 Portable Windows 11 x64 environment-variable manager built with Rust, native
-Windows controls and bundled SQLite. This is a local release candidate; controlled
-native acceptance checks remain open. Version 0.1.2 embeds the supplied application artwork for Explorer, windows and the tray; see icon integration. Version 0.1.1 corrects backslash display in entry previews; see patch validation. The historical release measurements remains historical validation.
+Windows controls and bundled SQLite. Version 0.1.2 includes the application icon
+and corrected path previews. This is a preview release; controlled native acceptance
+checks remain open.
 
 Extract the package into a writable local folder and run
 `environment-variable-manager.exe` as an ordinary user. Sign-in startup is enabled

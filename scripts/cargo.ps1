@@ -22,10 +22,17 @@ $start.RedirectStandardOutput = $true
 $start.RedirectStandardError = $true
 # Child-process build configuration only; the caller environment is untouched.
 $start.Environment['CARGO_HOME'] = Join-Path $root 'cargo-home'
+# Remove personal build-machine paths from panic/source strings in shipped binaries.
+$pathMaps = @(
+    ('--remap-path-prefix=' + $root + '=/workspace/environment-variable-manager'),
+    ('--remap-path-prefix=' + $root.Replace('\','/') + '=/workspace/environment-variable-manager'),
+    ('--remap-path-prefix=' + $env:USERPROFILE + '=/user'),
+    ('--remap-path-prefix=' + $env:USERPROFILE.Replace('\','/') + '=/user')
+)
 $configs = @(
     ('build.rustc="' + (Join-Path $rustBin 'rustc.exe').Replace('\','/') + '"'),
     ('target.x86_64-pc-windows-msvc.linker="' + "$msvc/bin/Hostx64/x64/link.exe" + '"'),
-    ('target.x86_64-pc-windows-msvc.rustflags=' + (ConvertTo-Json -Compress -InputObject @('-C','target-feature=+crt-static','-L',"native=$msvc/lib/x64",'-L',"native=$sdk/um/x64",'-L',"native=$sdk/ucrt/x64")))
+    ('target.x86_64-pc-windows-msvc.rustflags=' + (ConvertTo-Json -Compress -InputObject (@('-C','target-feature=+crt-static','-L',"native=$msvc/lib/x64",'-L',"native=$sdk/um/x64",'-L',"native=$sdk/ucrt/x64") + $pathMaps)))
 )
 foreach ($config in $configs) { $start.ArgumentList.Add('--config'); $start.ArgumentList.Add($config) }
 foreach ($argument in $CargoArguments) { $start.ArgumentList.Add($argument) }
