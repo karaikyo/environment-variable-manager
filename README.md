@@ -53,3 +53,5 @@ may use ordinary-user Temp folders to avoid this workspace's low-integrity label
 no security policy is changed. Required [third-party notices](THIRD-PARTY-NOTICES.md)
 are included in the archive. There is no application runtime installation,
 telemetry, network dependency, automatic updater or restore-from-history action.
+
+See [automated releases](RELEASING.md) for tag-triggered Windows builds, preview releases and manual build verification.

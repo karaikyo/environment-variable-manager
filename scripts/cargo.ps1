@@ -3,16 +3,36 @@ param([Parameter(ValueFromRemainingArguments)][string[]]$CargoArguments)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $rustBin = Join-Path $env:USERPROFILE '.rustup/toolchains/stable-x86_64-pc-windows-msvc/bin'
-$msvc = 'D:/dev/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.42.34433'
-$sdk = 'C:/Program Files (x86)/Windows Kits/10/Lib/10.0.22621.0'
+$msvc = $env:EVM_MSVC_TOOLS
+if (-not $msvc) {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+    $installation = if (Test-Path -LiteralPath $vswhere) { & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath }
+    if (-not $installation) { throw 'Installed MSVC tools not found; set EVM_MSVC_TOOLS.' }
+    $toolsVersion = (Get-Content -LiteralPath (Join-Path $installation 'VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt') -Raw).Trim()
+    $msvc = Join-Path $installation "VC/Tools/MSVC/$toolsVersion"
+}
+$sdk = $env:EVM_WINDOWS_SDK_LIB
+if (-not $sdk) {
+    $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/Lib'
+    $sdk = Get-ChildItem -LiteralPath $sdkRoot -Directory | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'um/x64/kernel32.lib') } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1 -ExpandProperty FullName
+    if (-not $sdk) { throw 'Installed Windows SDK libraries not found; set EVM_WINDOWS_SDK_LIB.' }
+}
+if (-not (Test-Path -LiteralPath (Join-Path $rustBin 'rustc.exe'))) {
+    $rustCompiler = & rustup which rustc
+    if ($LASTEXITCODE -ne 0) { throw 'An installed Rust toolchain is required.' }
+    $rustBin = Split-Path $rustCompiler -Parent
+}
+$msvc = $msvc.Replace('\','/')
+$sdk = $sdk.Replace('\','/')
 foreach ($required in @((Join-Path $rustBin 'cargo.exe'), (Join-Path $rustBin 'rustc.exe'), "$msvc/bin/Hostx64/x64/link.exe", "$sdk/um/x64/kernel32.lib")) {
     if (-not (Test-Path -LiteralPath $required)) { throw "Required installed tool missing: $required. No download is attempted; update local paths in scripts/cargo.ps1." }
 }
+$sourceCargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
 $cache = Join-Path $root 'cargo-home/registry'
 if (-not (Test-Path -LiteralPath (Join-Path $cache 'cache'))) {
     New-Item -ItemType Directory -Path $cache -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $env:USERPROFILE '.cargo/registry/cache') -Destination $cache -Recurse
-    Copy-Item -LiteralPath (Join-Path $env:USERPROFILE '.cargo/registry/index') -Destination $cache -Recurse
+    Copy-Item -LiteralPath (Join-Path $sourceCargoHome 'registry/cache') -Destination $cache -Recurse
+    Copy-Item -LiteralPath (Join-Path $sourceCargoHome 'registry/index') -Destination $cache -Recurse
 }
 $start = [Diagnostics.ProcessStartInfo]::new((Join-Path $rustBin 'cargo.exe'))
 $start.WorkingDirectory = $root
