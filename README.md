@@ -55,3 +55,5 @@ are included in the archive. There is no application runtime installation,
 telemetry, network dependency, automatic updater or restore-from-history action.
 
 See [automated releases](RELEASING.md) for tag-triggered Windows builds, preview releases and manual build verification.
+
+See [CHANGELOG.md](CHANGELOG.md) for changes in each version.
