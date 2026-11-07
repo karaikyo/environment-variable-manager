@@ -15,6 +15,17 @@ try {
     $expected = @('environment-variable-manager.exe','VERSION.txt') + @(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'package-files.txt'))
     $actual = @($zip.Entries | ForEach-Object { $_.FullName.Replace('\','/') })
     if (Compare-Object ($expected | Sort-Object) ($actual | Sort-Object)) { throw 'Unexpected archive content' }
+    # Verify the bytes shipped inside the archive, not merely the build directory.
+    $exeEntries = @($zip.Entries | Where-Object { $_.FullName -ceq 'environment-variable-manager.exe' })
+    if ($exeEntries.Count -ne 1) { throw 'Expected exactly one executable ZIP entry' }
+    $exeStream = $exeEntries[0].Open()
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try { $archivedExecutableHash = [Convert]::ToHexString($sha256.ComputeHash($exeStream)) }
+    finally { $exeStream.Dispose(); $sha256.Dispose() }
+    $builtExecutableHash = (Get-FileHash -LiteralPath (Join-Path $root 'target/x86_64-pc-windows-msvc/release/environment-variable-manager.exe') -Algorithm SHA256).Hash
+    if ($archivedExecutableHash -cne $builtExecutableHash -or $archivedExecutableHash -cne $metadata.ExecutableSha256) {
+        throw 'Archived executable SHA-256 differs from the build or package metadata'
+    }
     $versionEntry = $zip.GetEntry('VERSION.txt')
     if (-not $versionEntry) { throw 'VERSION metadata missing from archive' }
     $reader = [IO.StreamReader]::new($versionEntry.Open())
