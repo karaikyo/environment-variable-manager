@@ -1,0 +1,50 @@
+name: Windows CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Restore locked Cargo registry cache
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.cargo/registry
+            cargo-home/registry
+          key: windows-cargo-${{ hashFiles('Cargo.lock') }}
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Fetch locked dependencies
+        run: |
+          cargo --config net.offline=false fetch --locked --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency fetch failed' }
+      - name: Run Clippy on all targets
+        run: |
+          & ./scripts/cargo.ps1 clippy --offline --locked --all-targets
+          if ($LASTEXITCODE -ne 0) { throw 'Clippy failed' }
+      - name: Check test inventory and run headless suites
+        run: |
+          $suites = @(& ./scripts/ci-test-targets.ps1)
+          $arguments = @('test','--offline','--locked')
+          foreach ($suite in $suites) { $arguments += @('--test',$suite) }
+          & ./scripts/cargo.ps1 @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'Functional tests failed' }
+      - name: Verify package contract
+        run: |
+          & ./scripts/test-package.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging contract failed' }
