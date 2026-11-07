@@ -1,0 +1,21 @@
+# Local agent/runtime state and isolated checkouts
+.agents/
+.codex/
+.worktrees/
+.local/
+
+# Rust output and locally copied offline dependency caches
+**/target/
+**/cargo-home/
+
+# Disposable experiment measurements, databases and application data
+.scratch/windows-environment-manager/prototype/native-poc/runs/
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Generated application packages and QA captures
+dist/
+artifacts/

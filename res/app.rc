@@ -1,0 +1,2 @@
+// Embed only ICON/GROUP_ICON resources; do not add an activation-context manifest.
+1 ICON "icon.ico"
