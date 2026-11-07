@@ -1,6 +1,7 @@
-# Every tests/*.rs target must be classified. Unclassified tests fail CI.
+# Classify every Cargo integration-test target, including nested and explicit [[test]] targets.
+param([string]$Root = (Split-Path $PSScriptRoot -Parent))
 $ErrorActionPreference = 'Stop'
-$root = Split-Path $PSScriptRoot -Parent
+$root = (Resolve-Path -LiteralPath $Root).Path
 $headless = @(
   'browse', 'create_delete', 'edits', 'history', 'lifecycle',
   'observation', 'recovery', 'resume', 'startup', 'system_edits',
@@ -13,7 +14,17 @@ $controlled = @{
   recovery_process = 'Process termination and HKCU fixtures need an isolated session'
   system_helper = 'Named pipe, identity and helper security checks need controlled acceptance'
 }
-$actual = @(Get-ChildItem -LiteralPath (Join-Path $root 'tests') -File -Filter '*.rs' | ForEach-Object { $_.BaseName })
+# Cargo is authoritative: tests/<name>/main.rs, [[test]] and autobins settings
+# cannot be inferred reliably from a tests/*.rs directory listing.
+$manifest = Join-Path $root 'Cargo.toml'
+$metadataJson = & cargo metadata --manifest-path $manifest --format-version 1 --no-deps --offline --locked
+if ($LASTEXITCODE -ne 0 -or -not $metadataJson) { throw 'Failed to enumerate Cargo test targets' }
+$metadata = $metadataJson | ConvertFrom-Json -Depth 100
+$rootManifest = [IO.Path]::GetFullPath($manifest)
+$packages = @($metadata.packages | Where-Object { [IO.Path]::GetFullPath($_.manifest_path) -eq $rootManifest })
+if ($packages.Count -ne 1) { throw "Expected exactly one root Cargo package, found $($packages.Count)" }
+$actual = @($packages[0].targets | Where-Object { 'test' -in @($_.kind) } | ForEach-Object { $_.name })
+if (-not $actual.Count) { throw 'Cargo reported no integration-test targets' }
 $classified = @($headless) + @($controlled.Keys)
 $duplicates = @($classified | Group-Object | Where-Object Count -gt 1 | ForEach-Object Name)
 $missing = @($actual | Where-Object { $_ -notin $classified })
