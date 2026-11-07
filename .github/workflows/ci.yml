@@ -37,6 +37,8 @@ jobs:
         run: |
           & ./scripts/cargo.ps1 clippy --offline --locked --all-targets
           if ($LASTEXITCODE -ne 0) { throw 'Clippy failed' }
+      - name: Regression-check Cargo test inventory
+        run: ./scripts/test-ci-inventory.ps1
       - name: Check test inventory and run headless suites
         run: |
           $suites = @(& ./scripts/ci-test-targets.ps1)
