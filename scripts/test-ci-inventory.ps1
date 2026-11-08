@@ -18,7 +18,7 @@ function Assert-Unclassified([string]$Name) {
     $rejected = $false
     try { & $inventory -Root $root | Out-Null }
     catch {
-        if ($_.Exception.Message -notlike "*$Name*") { throw }
+        if ($_.Exception.Message -cnotlike "*$Name*") { throw }
         $rejected = $true
     }
     if (-not $rejected) { throw "Inventory silently accepted unclassified Cargo test target: $Name" }
@@ -43,6 +43,12 @@ try {
     $manifestChanged = $true
     [IO.File]::AppendAllText($manifest, "`n[[test]]`nname = `"$probe-explicit`"`npath = `"tests/$probe-explicit.rs`"`n")
     Assert-Unclassified "$probe-explicit"
+
+    # Cargo names are case-sensitive even on Windows. A distinct explicit target
+    # must not inherit the existing lowercase history target's classification.
+    [IO.File]::WriteAllBytes($manifest, $manifestBytes)
+    [IO.File]::AppendAllText($manifest, "`n[[test]]`nname = `"History`"`npath = `"tests/$probe-explicit.rs`"`n")
+    Assert-Unclassified 'History'
 }
 finally {
     if ($manifestChanged) { [IO.File]::WriteAllBytes($manifest, $manifestBytes) }

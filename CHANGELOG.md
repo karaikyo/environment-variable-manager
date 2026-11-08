@@ -14,6 +14,8 @@ release; controlled native acceptance checks remain open.
   so enabling or disabling startup can be retried safely.
 - Startup rejects commands exceeding the Windows Run limit before registering
   them or reporting startup as enabled, including paths containing Unicode.
+- CI classifies Cargo test targets by exact case and rejects unclassified targets
+  whose names differ only by capitalization from an existing suite.
 
 ### Added
 
