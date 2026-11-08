@@ -61,9 +61,21 @@ enum Work {
     Discard(Application, Scope, String),
 }
 struct Response {
-    startup: Option<Result<bool, String>>,
+    startup: Option<(bool, Result<(), String>)>,
     app: Application,
     message: Option<String>,
+}
+fn startup_status(
+    startup: &mut Result<Startup, String>,
+    registration: &dyn StartupRegistration,
+) -> (bool, Result<(), String>) {
+    match startup {
+        Ok(startup) => {
+            let status = startup.refresh_status(registration);
+            (startup.preferred_enabled(), status)
+        }
+        Err(error) => (false, Err(error.clone())),
+    }
 }
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
@@ -551,11 +563,11 @@ impl WindowState {
             Ok(response) => {
                 let mut response = response;
                 self.app = Some(response.app);
-                if let Some(startup) = response.startup {
+                if let Some((preferred, startup)) = response.startup {
                     SendMessageW(
                         self.startup,
                         BM_SETCHECK,
-                        if startup.as_ref().is_ok_and(|v| *v) {
+                        if preferred {
                             BST_CHECKED
                         } else {
                             BST_UNCHECKED
@@ -635,7 +647,9 @@ impl WindowState {
         let selected = selected_index(self.variables)
             .and_then(|i| self.visible.get(i))
             .cloned();
-        let entry_index = preserve_entry.then(|| selected_index(self.entries)).flatten();
+        let entry_index = preserve_entry
+            .then(|| selected_index(self.entries))
+            .flatten();
         let previous_entries = self.entry_values.clone();
         let (mut selection_start, mut selection_end) = (0u32, 0u32);
         SendMessageW(
@@ -1774,7 +1788,7 @@ pub fn run_with_startup(
                 return;
             }
             let mut startup = Startup::initialize(&app, &registration, &executable);
-            let startup_state = Some(startup.as_ref().map(|s| s.enabled()).map_err(Clone::clone));
+            let startup_state = Some(startup_status(&mut startup, &registration));
             if sender
                 .send(Response {
                     app,
@@ -1892,10 +1906,7 @@ pub fn run_with_startup(
                 if startup.is_err() {
                     startup = Startup::initialize(&response.app, &registration, &executable);
                 }
-                response.startup = Some(match &mut startup {
-                    Ok(s) => s.refresh_status(&registration).map(|()| s.enabled()),
-                    Err(error) => Err(error.clone()),
-                });
+                response.startup = Some(startup_status(&mut startup, &registration));
                 if sender.send(response).is_err() {
                     break;
                 }

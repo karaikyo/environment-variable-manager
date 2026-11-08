@@ -155,6 +155,41 @@ fn failed_settings_write_before_move_repair_preserves_in_memory_ownership() {
     );
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn startup_validates_complete_run_command_in_utf16_before_enabling() {
+    for prefix in ["C:/", "C:/\u{10400}"] {
+        for command_units in [260, 261] {
+            let dir = directory();
+            let app = Application::open(&Reader, &dir);
+            let reg = Registration::default();
+            let suffix = "/environment-variable-manager.exe";
+            let padding = command_units - 9 - prefix.encode_utf16().count() - suffix.len();
+            let executable = format!("{prefix}{}{suffix}", "a".repeat(padding));
+            let command = format!("\"{executable}\" --tray");
+            assert_eq!(command.encode_utf16().count(), command_units);
+            let result = Startup::initialize(&app, &reg, std::path::Path::new(&executable));
+            if command_units == 260 {
+                assert!(result.unwrap().enabled());
+                assert_eq!(
+                    reg.state().unwrap().command.as_deref(),
+                    Some(command.as_str())
+                );
+            } else {
+                let mut startup = result.unwrap();
+                assert!(!startup.enabled());
+                assert!(startup.refresh_status(&reg).unwrap_err().contains("260"));
+                assert!(reg.state().unwrap().command.is_none());
+                let mut retry =
+                    Startup::initialize(&app, &reg, std::path::Path::new(&executable)).unwrap();
+                assert!(!retry.enabled());
+                assert!(retry.set_enabled(true, &reg).is_err());
+                retry.set_enabled(false, &reg).unwrap();
+            }
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+}
 #[test]
 fn native_startup_changes_only_its_owned_value_and_refuses_stale_replacement() {
     use environment_variable_manager::startup::WindowsStartup;
@@ -193,6 +228,16 @@ fn native_startup_changes_only_its_owned_value_and_refuses_stale_replacement() {
     other.replace(None, Some("leave exactly")).unwrap();
     own.replace(None, Some("\"C:\\Owned App\\app.exe\" --tray"))
         .unwrap();
+    assert!(own
+        .replace(
+            Some("\"C:\\Owned App\\app.exe\" --tray"),
+            Some(&"a".repeat(261))
+        )
+        .is_err());
+    assert_eq!(
+        own.state().unwrap().command.as_deref(),
+        Some("\"C:\\Owned App\\app.exe\" --tray")
+    );
     assert!(own.replace(None, None).is_err());
     assert_eq!(
         other.state().unwrap().command.as_deref(),
@@ -242,6 +287,68 @@ fn native_startup_changes_only_its_owned_value_and_refuses_stale_replacement() {
             ERROR_SUCCESS
         );
     }
+}
+
+#[test]
+fn oversized_legacy_and_moved_startup_remain_disabled_and_removable() {
+    let executable = format!("C:/{}/environment-variable-manager.exe", "a".repeat(220));
+    let long_command = format!("\"{executable}\" --tray");
+    for old_command in [long_command.as_str(), "\"C:/Old/app.exe\" --tray"] {
+        let dir = directory();
+        let app = Application::open(&Reader, &dir);
+        // Seed settings produced by the older executable, which accepted long commands.
+        rusqlite::Connection::open(dir.join("environment.sqlite"))
+            .unwrap()
+            .execute(
+                "INSERT INTO settings(id,startup_enabled,startup_command) VALUES(1,1,?1)",
+                [old_command],
+            )
+            .unwrap();
+        let reg = Registration(RefCell::new(RegistrationState {
+            command: Some(old_command.into()),
+            blocked: false,
+        }));
+        let mut startup =
+            Startup::initialize(&app, &reg, std::path::Path::new(&executable)).unwrap();
+        assert!(!startup.enabled());
+        assert!(startup.preferred_enabled());
+        assert!(startup.refresh_status(&reg).unwrap_err().contains("260"));
+        assert_eq!(reg.state().unwrap().command.as_deref(), Some(old_command));
+        startup.set_enabled(false, &reg).unwrap();
+        assert!(reg.state().unwrap().command.is_none());
+        assert!(!startup.preferred_enabled());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn unblocking_after_move_does_not_validate_an_oversized_old_registration() {
+    let dir = directory();
+    let app = Application::open(&Reader, &dir);
+    let command = format!("\"C:/{}/app.exe\" --tray", "a".repeat(250));
+    rusqlite::Connection::open(dir.join("environment.sqlite"))
+        .unwrap()
+        .execute(
+            "INSERT INTO settings(id,startup_enabled,startup_command) VALUES(1,1,?1)",
+            [&command],
+        )
+        .unwrap();
+    let reg = Registration(RefCell::new(RegistrationState {
+        command: Some(command.clone()),
+        blocked: true,
+    }));
+    let mut startup =
+        Startup::initialize(&app, &reg, std::path::Path::new("C:/Short/app.exe")).unwrap();
+    reg.0.borrow_mut().blocked = false;
+    assert!(startup.refresh_status(&reg).is_err());
+    assert!(!startup.enabled());
+    assert_eq!(
+        reg.state().unwrap().command.as_deref(),
+        Some(command.as_str())
+    );
+    startup.set_enabled(false, &reg).unwrap();
+    assert!(reg.state().unwrap().command.is_none());
+    std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
 fn startup_policy_unhealthy_initialization_and_foreign_entries_are_preserved() {

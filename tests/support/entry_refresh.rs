@@ -21,12 +21,19 @@ struct Fixture(Arc<Mutex<String>>);
 impl RegistryReader for Fixture {
     fn read_scope(&self, scope: Scope) -> Result<Vec<Variable>, String> {
         Ok(if scope == Scope::User {
-            vec![Variable::text(
+            let mut values = vec![Variable::text(
                 scope,
                 "OwnedFixture",
                 &self.0.lock().unwrap(),
                 false,
-            )]
+            )];
+            values.push(Variable {
+                scope,
+                name: "RawFixture".into(),
+                registry_type: 3,
+                bytes: vec![0, 255],
+            });
+            values
         } else {
             vec![]
         })
@@ -38,7 +45,7 @@ impl RegistryWriter for Fixture {
     }
 }
 #[derive(Default)]
-struct Registration(Mutex<RegistrationState>);
+struct Registration(Arc<Mutex<RegistrationState>>);
 impl StartupRegistration for Registration {
     fn state(&self) -> Result<RegistrationState, String> {
         Ok(self.0.lock().unwrap().clone())
@@ -73,23 +80,27 @@ unsafe fn select(window: HWND, index: usize) {
 
 #[test]
 fn automatic_observation_preserves_active_entry_and_editor_selection() {
+    run_child("entry_refresh::observation_child");
+}
+#[test]
+fn invalid_startup_path_can_be_disabled_through_the_checkbox() {
+    run_child("entry_refresh::startup_path_child");
+}
+fn run_child(test: &str) {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let directory = std::env::temp_dir().join(format!(
-        "evm-entry-refresh-{}-{}",
+        "evm-entry-refresh-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::create_dir(&directory).expect("Exclusively reserve owned fixture");
     let log = std::fs::File::create(directory.join("child.log")).unwrap();
     let mut child = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "entry_refresh::observation_child",
-            "--ignored",
-            "--nocapture",
-        ])
+        .args(["--exact", test, "--ignored", "--nocapture"])
         .env("EVM_ENTRY_REFRESH_FIXTURE", &directory)
         .stdout(log.try_clone().unwrap())
         .stderr(log)
@@ -116,6 +127,67 @@ fn automatic_observation_preserves_active_entry_and_editor_selection() {
     let owned = directory.canonicalize().unwrap();
     assert!(owned.starts_with(std::env::temp_dir().canonicalize().unwrap()));
     std::fs::remove_dir_all(owned).unwrap();
+}
+
+#[test]
+#[ignore = "executed only by the owned native child harness"]
+fn startup_path_child() {
+    let directory = PathBuf::from(std::env::var_os("EVM_ENTRY_REFRESH_FIXTURE").unwrap());
+    let value = Arc::new(Mutex::new("fixture".to_owned()));
+    let data = directory.join("data");
+    let executable = format!("C:/{}/environment-variable-manager.exe", "a".repeat(220));
+    let command = format!("\"{executable}\" --tray");
+    drop(environment_variable_manager::Application::open(
+        &Fixture(value.clone()),
+        &data,
+    ));
+    rusqlite::Connection::open(data.join("environment.sqlite"))
+        .unwrap()
+        .execute(
+            "INSERT INTO settings(id,startup_enabled,startup_command) VALUES(1,1,?1)",
+            [&command],
+        )
+        .unwrap();
+    let state = Arc::new(Mutex::new(RegistrationState {
+        command: Some(command),
+        blocked: false,
+    }));
+    let observed = state.clone();
+    let controller = std::thread::spawn(move || unsafe {
+        let mut window = std::ptr::null_mut();
+        wait(|| {
+            window =
+                native_status::find_owned_window("EnvironmentManager.Main", std::process::id());
+            !window.is_null() && IsWindowEnabled(GetDlgItem(window, 152)) != 0
+        });
+        let result = std::panic::catch_unwind(|| {
+            let checkbox = GetDlgItem(window, 152);
+            assert_eq!(
+                SendMessageW(checkbox, BM_GETCHECK, 0, 0),
+                BST_CHECKED as isize
+            );
+            // An actual click must turn off the saved preference despite the status error.
+            SendMessageW(checkbox, BM_CLICK, 0, 0);
+            wait(|| observed.lock().unwrap().command.is_none() && IsWindowEnabled(checkbox) != 0);
+            assert_eq!(
+                SendMessageW(checkbox, BM_GETCHECK, 0, 0),
+                BST_UNCHECKED as isize
+            );
+        });
+        SendMessageW(window, WM_COMMAND, 151, 0);
+        result
+    });
+    desktop::run_with_startup(
+        Fixture(value),
+        data,
+        Registration(state),
+        PathBuf::from(executable),
+        false,
+    )
+    .unwrap();
+    if let Err(error) = controller.join().unwrap() {
+        std::panic::resume_unwind(error);
+    }
 }
 
 #[test]
@@ -205,9 +277,31 @@ fn observation_child() {
                 GetWindowLongPtrW(editor, GWL_STYLE) & ES_READONLY as isize,
                 0
             );
+            SendMessageW(window, WM_SETTINGCHANGE, 0, 0);
+            SendMessageW(window, WM_TIMER, 1, 0);
+            wait(|| native_status::healthy(window));
+            assert_eq!(
+                SendMessageW(entries, LVM_GETNEXTITEM, usize::MAX, LVNI_SELECTED as isize),
+                -1
+            );
+            assert_eq!(text(editor), "");
+            assert_ne!(
+                GetWindowLongPtrW(editor, GWL_STYLE) & ES_READONLY as isize,
+                0
+            );
             select(entries, 0);
             assert_eq!(text(editor), "first");
             assert_eq!(
+                GetWindowLongPtrW(editor, GWL_STYLE) & ES_READONLY as isize,
+                0
+            );
+            select(GetDlgItem(window, 103), 1);
+            assert_eq!(text(editor), "00 FF");
+            SendMessageW(window, WM_SETTINGCHANGE, 0, 0);
+            SendMessageW(window, WM_TIMER, 1, 0);
+            wait(|| native_status::healthy(window));
+            assert_eq!(text(editor), "00 FF");
+            assert_ne!(
                 GetWindowLongPtrW(editor, GWL_STYLE) & ES_READONLY as isize,
                 0
             );

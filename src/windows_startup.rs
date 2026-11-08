@@ -148,6 +148,9 @@ impl StartupRegistration for WindowsStartup {
         })
     }
     fn replace(&self, expected: Option<&str>, desired: Option<&str>) -> Result<(), String> {
+        if let Some(command) = desired {
+            crate::startup::validate_command(command)?;
+        }
         let state = self.state()?;
         if state.command.as_deref() != expected {
             return Err("Startup entry changed; existing entry preserved".into());

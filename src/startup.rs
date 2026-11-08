@@ -2,6 +2,13 @@ pub use crate::windows_startup::WindowsStartup;
 // Sign-in preference. Only an explicit setting change may re-enable startup.
 use crate::{storage, Application};
 use std::path::{Path, PathBuf};
+/// Run keys accept a command line of at most 260 Windows UTF-16 code units.
+pub(crate) fn validate_command(command: &str) -> Result<(), String> {
+    if command.encode_utf16().count() > 260 {
+        return Err("Sign-in startup command exceeds 260 Windows characters; move the application to a shorter path".into());
+    }
+    Ok(())
+}
 #[derive(Clone, Debug, Default)]
 pub struct RegistrationState {
     pub command: Option<String>,
@@ -48,7 +55,10 @@ impl Startup {
             None => {
                 // Commit the one-time decision before touching Run. Failure is never retried silently.
                 startup.persist(false)?;
-                if !state.blocked && state.command.is_none() {
+                if !state.blocked
+                    && state.command.is_none()
+                    && validate_command(&startup.command).is_ok()
+                {
                     startup.set_enabled(true, registration)?;
                 }
             }
@@ -59,13 +69,21 @@ impl Startup {
                     && state.command == startup.registered;
                 if enabled && (state.command.is_none() || state.command != startup.registered) {
                     startup.persist(false)?;
-                } else if startup.enabled && startup.registered.as_ref() != Some(&startup.command) {
+                } else if startup.enabled
+                    && startup.registered.as_ref() != Some(&startup.command)
+                    && validate_command(&startup.command).is_ok()
+                {
                     // Same-account manual folder move: replace only the exact
                     // previously owned, still enabled and unblocked command.
                     startup.set_enabled(true, registration)?;
                 }
             }
         }
+        startup.enabled &= validate_command(&startup.command).is_ok();
+        startup.enabled &= startup
+            .registered
+            .as_deref()
+            .is_some_and(|command| validate_command(command).is_ok());
         Ok(startup)
     }
     pub fn enabled(&self) -> bool {
@@ -82,8 +100,20 @@ impl Startup {
         if self.preferred_enabled && !owned {
             self.persist(false)?;
         }
-        self.enabled = self.preferred_enabled && owned && !state.blocked;
-        Ok(())
+        let valid = validate_command(&self.command).and_then(|()| {
+            if owned {
+                validate_command(
+                    state
+                        .command
+                        .as_deref()
+                        .expect("owned registration is present"),
+                )
+            } else {
+                Ok(())
+            }
+        });
+        self.enabled = self.preferred_enabled && owned && !state.blocked && valid.is_ok();
+        valid
     }
     fn persist(&mut self, enabled: bool) -> Result<(), String> {
         storage::set_startup_preference(&self.directory, enabled, self.registered.as_deref())?;
@@ -96,6 +126,9 @@ impl Startup {
         enabled: bool,
         registration: &dyn StartupRegistration,
     ) -> Result<(), String> {
+        if enabled {
+            validate_command(&self.command)?;
+        }
         let state = registration.state()?;
         if enabled && state.blocked {
             return Err("Sign-in startup is disabled by Windows settings or policy".into());

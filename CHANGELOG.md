@@ -12,6 +12,8 @@ release; controlled native acceptance checks remain open.
   changed entry lists require a new selection before editing continues.
 - Failed startup-path replacements retain ownership of the previous registration
   so enabling or disabling startup can be retried safely.
+- Startup rejects commands exceeding the Windows Run limit before registering
+  them or reporting startup as enabled, including paths containing Unicode.
 
 ### Added
 
