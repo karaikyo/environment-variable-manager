@@ -13,6 +13,8 @@ use std::{
 use windows_sys::Win32::{
     Foundation::*, System::LibraryLoader::GetModuleHandleW, UI::WindowsAndMessaging::*,
 };
+#[path = "support/entry_refresh.rs"]
+mod entry_refresh;
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }

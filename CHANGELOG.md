@@ -6,6 +6,11 @@ release; controlled native acceptance checks remain open.
 
 ## [Unreleased]
 
+### Fixed
+
+- Automatic observations preserve the active value entry and editor position;
+  changed entry lists require a new selection before editing continues.
+
 ### Added
 
 - GitHub Actions release workflow: matching version tags build the Windows x64

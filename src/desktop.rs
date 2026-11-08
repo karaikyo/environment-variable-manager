@@ -92,6 +92,8 @@ struct WindowState {
     visible: Vec<(Scope, String)>,
     entry_values: Vec<String>,
     filling: bool,
+    restore_entry_focus: bool,
+    discard_reload: bool,
     dpi: u32,
     font: HFONT,
     search_label: HWND,
@@ -135,6 +137,8 @@ impl WindowState {
             visible: Vec::new(),
             entry_values: Vec::new(),
             filling: false,
+            restore_entry_focus: false,
+            discard_reload: false,
             dpi: 96,
             font: null_mut(),
             search_label: null_mut(),
@@ -566,7 +570,8 @@ impl WindowState {
                     }
                 }
                 EnableWindow(self.startup, 1);
-                self.populate();
+                let preserve_entry = !std::mem::take(&mut self.discard_reload);
+                self.populate_entries(preserve_entry);
                 EnableWindow(self.entry, 1);
                 for hwnd in [self.search, self.filter, self.variables] {
                     EnableWindow(hwnd, 1);
@@ -621,12 +626,28 @@ impl WindowState {
         }
     }
     unsafe fn populate(&mut self) {
+        self.populate_entries(true);
+    }
+    unsafe fn populate_entries(&mut self, preserve_entry: bool) {
         let Some(app) = &self.app else {
             return;
         };
         let selected = selected_index(self.variables)
             .and_then(|i| self.visible.get(i))
             .cloned();
+        let entry_index = preserve_entry.then(|| selected_index(self.entries)).flatten();
+        let previous_entries = self.entry_values.clone();
+        let (mut selection_start, mut selection_end) = (0u32, 0u32);
+        SendMessageW(
+            self.entry,
+            EM_GETSEL,
+            &mut selection_start as *mut _ as usize,
+            &mut selection_end as *mut _ as isize,
+        );
+        let first_line = SendMessageW(self.entry, EM_GETFIRSTVISIBLELINE, 0, 0);
+        let restore_focus = self.restore_entry_focus
+            || windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus() == self.entry;
+        self.restore_entry_focus = false;
         let filter = match SendMessageW(self.filter, CB_GETCURSEL, 0, 0) {
             1 => Some(Scope::User),
             2 => Some(Scope::System),
@@ -680,6 +701,7 @@ impl WindowState {
             );
         }
         let row = selected
+            .as_ref()
             .and_then(|wanted| {
                 self.visible
                     .iter()
@@ -723,6 +745,50 @@ impl WindowState {
         });
         SetWindowTextW(self.status, wide(&lines.join("\r\n")).as_ptr());
         self.show_variable();
+        if preserve_entry
+            && selected.is_some()
+            && selected == self.selected()
+            && !self.entry_values.is_empty()
+        {
+            if let Some(index) = entry_index.filter(|_| previous_entries == self.entry_values) {
+                // Observation does not change an unchanged editor's target or caret.
+                self.filling = true;
+                select_row(self.entries, index);
+                self.filling = false;
+                self.show_entry();
+                SendMessageW(
+                    self.entry,
+                    EM_SETSEL,
+                    selection_start as usize,
+                    selection_end as isize,
+                );
+                let current_line = SendMessageW(self.entry, EM_GETFIRSTVISIBLELINE, 0, 0);
+                SendMessageW(self.entry, EM_LINESCROLL, 0, first_line - current_line);
+                if restore_focus && GetForegroundWindow() == GetParent(self.entry) {
+                    SetFocus(self.entry);
+                }
+            } else {
+                // A changed snapshot cannot safely identify an old entry by row number.
+                let item = LVITEMW {
+                    stateMask: LVIS_SELECTED | LVIS_FOCUSED,
+                    ..Default::default()
+                };
+                self.filling = true;
+                SendMessageW(
+                    self.entries,
+                    LVM_SETITEMSTATE,
+                    usize::MAX,
+                    &item as *const _ as isize,
+                );
+                SetWindowTextW(self.entry, wide("").as_ptr());
+                SetWindowTextW(
+                    self.entry_label,
+                    wide("Entries changed; select an entry to continue").as_ptr(),
+                );
+                self.filling = false;
+            }
+            self.edit_gate();
+        }
     }
     unsafe fn show_variable(&mut self) {
         let selected = self.selected();
@@ -917,10 +983,17 @@ impl WindowState {
                     .as_ref()
                     .is_some_and(|app| app.storage_error().is_none())) as i32,
         );
-        SendMessageW(self.entry, EM_SETREADONLY, (!editable) as usize, 0);
+        let entry_selected = selected_index(self.entries).is_some();
+        SendMessageW(
+            self.entry,
+            EM_SETREADONLY,
+            (!editable || !entry_selected) as usize,
+            0,
+        );
         for (i, hwnd) in self.buttons.iter().enumerate() {
             let enabled = match i {
-                0..=3 => editable,
+                0 => editable,
+                1..=3 => editable && entry_selected,
                 7 => self.app.is_some(),
                 4 => self.selected().is_some_and(|(scope, name)| {
                     self.app
@@ -1045,6 +1118,8 @@ impl WindowState {
         let Some(app) = self.app.take() else {
             return;
         };
+        self.restore_entry_focus =
+            windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus() == self.entry;
         if let Err(error) = self.sender.try_send(Work::Refresh(app, kind)) {
             let work = match error {
                 std::sync::mpsc::TrySendError::Full(work)
@@ -1185,10 +1260,14 @@ impl WindowState {
             CONFIRM_DELETE => Work::Delete(app),
             _ => return,
         };
+        self.discard_reload = id == DISCARD;
         self.submit(work);
     }
     unsafe fn submit(&mut self, work: Work) {
+        self.restore_entry_focus =
+            windows_sys::Win32::UI::Input::KeyboardAndMouse::GetFocus() == self.entry;
         if let Err(error) = self.sender.try_send(work) {
+            self.discard_reload = false;
             let work = match error {
                 std::sync::mpsc::TrySendError::Full(work)
                 | std::sync::mpsc::TrySendError::Disconnected(work) => work,
@@ -1616,6 +1695,7 @@ unsafe extern "system" fn window_proc(
                 }
                 if notification.idFrom == ENTRIES {
                     state.show_entry();
+                    state.edit_gate();
                 }
             }
             0
