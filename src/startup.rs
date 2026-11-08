@@ -109,10 +109,18 @@ impl Startup {
             // Persist the decision and ownership before Run. If interrupted before
             // registration, its absence on the next launch is an external disable,
             // never a reason to retry registration automatically.
-            self.registered = Some(self.command.clone());
-            self.persist(true)?;
+            let previous = self.registered.replace(self.command.clone());
+            if let Err(error) = self.persist(true) {
+                self.registered = previous;
+                return Err(error);
+            }
             if let Err(error) = registration.replace(state.command.as_deref(), Some(&self.command))
             {
+                // A refused replacement does not transfer ownership. Keep the old
+                // exact command so an explicit retry can repair or remove it.
+                self.registered = previous;
+                self.enabled = false;
+                self.preferred_enabled = false;
                 self.persist(false)?;
                 return Err(error);
             }

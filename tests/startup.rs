@@ -67,6 +67,94 @@ fn startup_defaults_once_persists_disable_and_respects_external_disable() {
     assert!(reg.state().unwrap().command.is_none());
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn failed_move_repair_retains_ownership_for_enable_or_disable_retry() {
+    struct FailOnce {
+        inner: Registration,
+        fail: std::cell::Cell<bool>,
+    }
+    impl StartupRegistration for FailOnce {
+        fn state(&self) -> Result<RegistrationState, String> {
+            self.inner.state()
+        }
+        fn replace(&self, expected: Option<&str>, desired: Option<&str>) -> Result<(), String> {
+            if self.fail.replace(false) {
+                return Err("Owned fixture transient write denial".into());
+            }
+            self.inner.replace(expected, desired)
+        }
+    }
+    for enable in [false, true] {
+        let dir = directory();
+        let app = Application::open(&Reader, &dir);
+        let reg = FailOnce {
+            inner: Registration::default(),
+            fail: std::cell::Cell::new(false),
+        };
+        Startup::initialize(&app, &reg, std::path::Path::new("C:/Old/app.exe")).unwrap();
+        reg.fail.set(true);
+        let moved = std::path::Path::new("C:/Moved/app.exe");
+        assert!(Startup::initialize(&app, &reg, moved).is_err());
+        assert_eq!(
+            reg.state().unwrap().command.as_deref(),
+            Some("\"C:/Old/app.exe\" --tray")
+        );
+        let mut retry = Startup::initialize(&app, &reg, moved).unwrap();
+        assert!(!retry.enabled());
+        retry.set_enabled(enable, &reg).unwrap();
+        assert_eq!(
+            reg.state().unwrap().command.as_deref(),
+            if enable {
+                Some("\"C:/Moved/app.exe\" --tray")
+            } else {
+                None
+            }
+        );
+        let reopened = Startup::initialize(&app, &reg, moved).unwrap();
+        assert_eq!(reopened.enabled(), enable);
+        // The recovery must not weaken protection for a truly foreign replacement.
+        reg.inner.0.borrow_mut().command = Some("foreign registration".into());
+        assert!(retry.set_enabled(true, &reg).is_err());
+        assert!(retry.set_enabled(false, &reg).is_err());
+        assert_eq!(
+            reg.state().unwrap().command.as_deref(),
+            Some("foreign registration")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn failed_settings_write_before_move_repair_preserves_in_memory_ownership() {
+    let dir = directory();
+    let app = Application::open(&Reader, &dir);
+    let reg = Registration::default();
+    Startup::initialize(&app, &reg, std::path::Path::new("C:/Old/app.exe")).unwrap();
+    // A policy block defers automatic move repair until the explicit retry below.
+    reg.0.borrow_mut().blocked = true;
+    let mut moved =
+        Startup::initialize(&app, &reg, std::path::Path::new("C:/Moved/app.exe")).unwrap();
+    reg.0.borrow_mut().blocked = false;
+    let database = dir.join("environment.sqlite");
+    let original = std::fs::metadata(&database).unwrap().permissions();
+    let mut read_only = original.clone();
+    read_only.set_readonly(true);
+    std::fs::set_permissions(&database, read_only).unwrap();
+    let failure = moved.set_enabled(true, &reg);
+    std::fs::set_permissions(&database, original).unwrap();
+    assert!(failure.is_err());
+    assert_eq!(
+        reg.state().unwrap().command.as_deref(),
+        Some("\"C:/Old/app.exe\" --tray")
+    );
+    moved.set_enabled(true, &reg).unwrap();
+    assert_eq!(
+        reg.state().unwrap().command.as_deref(),
+        Some("\"C:/Moved/app.exe\" --tray")
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
 #[test]
 fn native_startup_changes_only_its_owned_value_and_refuses_stale_replacement() {
     use environment_variable_manager::startup::WindowsStartup;

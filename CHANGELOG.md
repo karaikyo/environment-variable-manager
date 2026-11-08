@@ -10,6 +10,8 @@ release; controlled native acceptance checks remain open.
 
 - Automatic observations preserve the active value entry and editor position;
   changed entry lists require a new selection before editing continues.
+- Failed startup-path replacements retain ownership of the previous registration
+  so enabling or disabling startup can be retried safely.
 
 ### Added
 
