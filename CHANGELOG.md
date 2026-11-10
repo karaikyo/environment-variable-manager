@@ -6,6 +6,8 @@ release; controlled native acceptance checks remain open.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-10
+
 ### Fixed
 
 - Automatic observations preserve the active value entry and editor position;
