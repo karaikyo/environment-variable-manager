@@ -6,6 +6,8 @@ release; controlled native acceptance checks remain open.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-11
+
 ### Changed
 
 - History observation times display in the Windows system's local timezone,
