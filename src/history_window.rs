@@ -48,6 +48,48 @@ fn scope(s: Scope) -> &'static str {
 fn preview(s: &str) -> String {
     format!("{s:?}").replace("\\\\", "\\")
 }
+
+/// Convert only for display, using the Windows timezone and its historical DST rules.
+fn observed_local_time(epoch_ms: i64) -> String {
+    use windows_sys::Win32::System::Time::{
+        FileTimeToSystemTime, GetDynamicTimeZoneInformation, SystemTimeToTzSpecificLocalTimeEx,
+        DYNAMIC_TIME_ZONE_INFORMATION,
+    };
+    let unavailable = || format!("Unavailable (UTC ms: {epoch_ms})");
+    // FILETIME counts 100 ns intervals since 1601, rather than milliseconds since 1970.
+    let Some(ticks) = epoch_ms
+        .checked_add(11_644_473_600_000)
+        .and_then(|ms| ms.checked_mul(10_000))
+        .and_then(|ticks| u64::try_from(ticks).ok())
+    else {
+        return unavailable();
+    };
+    let file_time = FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    };
+    let mut utc = SYSTEMTIME::default();
+    let mut local = SYSTEMTIME::default();
+    let mut zone = DYNAMIC_TIME_ZONE_INFORMATION::default();
+    unsafe {
+        if FileTimeToSystemTime(&file_time, &mut utc) == 0
+            || GetDynamicTimeZoneInformation(&mut zone) == u32::MAX
+            || SystemTimeToTzSpecificLocalTimeEx(&zone, &utc, &mut local) == 0
+        {
+            return unavailable();
+        }
+    }
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
+        local.wYear,
+        local.wMonth,
+        local.wDay,
+        local.wHour,
+        local.wMinute,
+        local.wSecond,
+        local.wMilliseconds
+    )
+}
 enum Request {
     Page(Option<(Scope, String)>, usize),
     Clear(Option<(Scope, String)>),
@@ -194,7 +236,7 @@ impl State {
         self.list = child(
             hwnd,
             "SysListView32",
-            "History records: scope, name, source, outcome and UTC observation time",
+            "History records: scope, name, source, outcome and local observation time",
             WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
             RECORDS,
         );
@@ -205,7 +247,7 @@ impl State {
                 ("Variable", 170),
                 ("Source", 180),
                 ("Outcome", 100),
-                ("Observed UTC epoch ms", 170),
+                ("Observed local time", 210),
                 ("Record", 70),
             ],
         );
@@ -442,7 +484,7 @@ impl State {
                                     r.name.clone(),
                                     r.source.clone(),
                                     r.outcome.clone(),
-                                    r.time_ms.to_string(),
+                                    observed_local_time(r.time_ms),
                                     r.id.to_string(),
                                 ],
                             );

@@ -9,6 +9,95 @@ use std::{
 use windows_sys::Win32::UI::{Controls::*, WindowsAndMessaging::*};
 
 struct Snapshot;
+#[test]
+fn history_displays_windows_local_time_without_changing_stored_timestamps() {
+    run_child("native_local_time_child");
+}
+#[test]
+#[ignore = "owned child process invoked by the native history parent"]
+fn native_local_time_child() {
+    use std::os::windows::process::CommandExt;
+    let directory =
+        PathBuf::from(std::env::var_os("EVM_HISTORY_NATIVE_DATA").unwrap()).join("data");
+    let app = Application::open(&Snapshot, &directory);
+    let timestamps = [0i64, 1705322096789, 1721046896789, i64::MAX];
+    let database = directory.join("environment.sqlite");
+    {
+        let db = rusqlite::Connection::open(&database).unwrap();
+        for timestamp in timestamps {
+            db.execute("INSERT INTO operations(scope,name,before_type,before_raw,after_type,after_raw,time_ms,source,outcome) VALUES(0,'OwnedFixture',1,?1,1,?1,?2,'external (actor unknown)','observed')", rusqlite::params![Variable::text(Scope::User,"OwnedFixture","original",false).bytes,timestamp]).unwrap();
+        }
+    }
+    let before = std::fs::read(&database).unwrap();
+    // Independent .NET conversion oracle; never changes the machine timezone.
+    // Epoch plus winter/summer instants exercise historical and DST conversion.
+    let output = Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command",
+        "0L,1705322096789L,1721046896789L | ForEach-Object { [TimeZoneInfo]::ConvertTime([DateTimeOffset]::FromUnixTimeMilliseconds($_), [TimeZoneInfo]::Local).ToString('yyyy-MM-dd HH:mm:ss.fff', [Globalization.CultureInfo]::InvariantCulture) }"])
+        .creation_flags(0x08000000).output().unwrap();
+    assert!(
+        output.status.success(),
+        "Timezone oracle failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut expected: Vec<String> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(expected.len(), 3);
+    expected.push(format!("Unavailable (UTC ms: {})", i64::MAX));
+    unsafe {
+        InitCommonControlsEx(&INITCOMMONCONTROLSEX {
+            dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_LISTVIEW_CLASSES,
+        });
+        let window = history_window::open(null_mut(), directory, None).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !native_status::history_loaded(window) {
+            assert!(Instant::now() < deadline);
+            pump();
+        }
+        let list = GetDlgItem(window, 202);
+        let mut buffer = [0u16; 128];
+        let mut column = LVCOLUMNW {
+            mask: LVCF_TEXT,
+            pszText: buffer.as_mut_ptr(),
+            cchTextMax: buffer.len() as i32,
+            ..Default::default()
+        };
+        assert_ne!(
+            SendMessageW(list, LVM_GETCOLUMNW, 4, &mut column as *mut _ as isize),
+            0
+        );
+        assert_eq!(
+            String::from_utf16_lossy(&buffer[..buffer.iter().position(|c| *c == 0).unwrap()]),
+            "Observed local time"
+        );
+        for (row, expected) in expected.iter().rev().enumerate() {
+            let mut item = LVITEMW {
+                iSubItem: 4,
+                pszText: buffer.as_mut_ptr(),
+                cchTextMax: buffer.len() as i32,
+                ..Default::default()
+            };
+            let len = SendMessageW(list, LVM_GETITEMTEXTW, row, &mut item as *mut _ as isize);
+            assert_eq!(String::from_utf16_lossy(&buffer[..len as usize]), *expected);
+        }
+        SendMessageW(window, WM_CLOSE, 0, 0);
+        while !history_window::workers_settled() {
+            pump();
+        }
+    }
+    assert_eq!(
+        app.history(None, 0, 50)
+            .unwrap()
+            .iter()
+            .map(|r| r.time_ms)
+            .collect::<Vec<_>>(),
+        timestamps.into_iter().rev().collect::<Vec<_>>()
+    );
+    assert_eq!(std::fs::read(database).unwrap(), before);
+}
 impl RegistryReader for Snapshot {
     fn read_scope(&self, scope: Scope) -> Result<Vec<Variable>, String> {
         Ok(if scope == Scope::User {

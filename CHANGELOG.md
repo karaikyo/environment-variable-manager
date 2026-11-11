@@ -6,6 +6,11 @@ release; controlled native acceptance checks remain open.
 
 ## [Unreleased]
 
+### Changed
+
+- History observation times display in the Windows system's local timezone,
+  including historical daylight-saving rules. Stored UTC timestamps are unchanged.
+
 ## [0.1.3] - 2026-11-10
 
 ### Fixed
