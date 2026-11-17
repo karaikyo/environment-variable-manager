@@ -6,6 +6,7 @@ mod mutations;
 pub mod native_lifecycle;
 pub mod resume;
 pub mod startup;
+pub mod update_check;
 mod storage;
 mod system_libraries;
 mod windows_startup;
