@@ -12,6 +12,11 @@ beside the executable. The database and its backups are unencrypted.
 
 To update:
 
+Choose **Check for updates** in the main window to look for a newer Windows x64
+release, including previews. This sends a release metadata request to GitHub.
+If an update is found, choose **Open release page** and download the portable ZIP
+in your browser. You can also obtain the ZIP separately and install it offline.
+
 1. Use **Exit** in the application or tray menu and wait for the process to stop.
    Closing the main window keeps monitoring in the tray. If drafts exist, choose
    **Exit and discard unsaved edits** or **Cancel exit**; unsaved drafts are
@@ -46,6 +51,5 @@ to the new quoted path. Disabled, missing, blocked or foreign registrations and
 unrelated startup entries are left alone. Windows blocks affect effective status
 without erasing the saved enabled preference.
 
-Updates work offline. There are no automatic update checks/downloads, accounts,
-profiles or cross-machine history migration. Do not include personal `data/` when
-sharing an application package.
+Installation from a downloaded ZIP works offline. Do not include personal
+`data/` when sharing an application package.

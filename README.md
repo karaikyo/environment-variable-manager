@@ -10,6 +10,9 @@ Extract the package into a writable local folder and run
 by default after healthy initialization; the main window lets you disable it.
 Closing the window keeps monitoring in the tray. Use **Exit** to stop it.
 [Run and update instructions](RUN-UPDATE.md) explain data preservation and backups.
+Use **Check for updates** to look up published releases on GitHub, including
+previews. If a newer version is available, **Open release page** takes you to
+the download in your browser. Install the ZIP manually and keep `data/`.
 
 Browse and search user/system variables separately, with each semicolon-delimited
 value entry on its own row. Save applies the selected draft directly; Discard
@@ -51,8 +54,8 @@ updating, and never share it as part of an application package. All test fixture
 use disposable data and owned registry keys/variables. Product execution copies
 may use ordinary-user Temp folders to avoid this workspace's low-integrity label;
 no security policy is changed. Required [third-party notices](THIRD-PARTY-NOTICES.md)
-are included in the archive. There is no application runtime installation,
-telemetry, network dependency, automatic updater or restore-from-history action.
+are included in the archive. Environment management and variable history work
+offline. The app contacts GitHub only when you request an update check.
 
 See [automated releases](RELEASING.md) for tag-triggered Windows builds, preview releases and manual build verification.
 
