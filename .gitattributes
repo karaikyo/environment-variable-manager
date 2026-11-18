@@ -1,2 +1,2 @@
 # Preserve upstream license notices verbatim, including their original whitespace.
-notices/** -whitespace
+notices/** -whitespace linguist-vendored
