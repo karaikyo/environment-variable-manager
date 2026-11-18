@@ -5,7 +5,7 @@ $root = (Resolve-Path -LiteralPath $Root).Path
 $headless = @(
   'browse', 'create_delete', 'edits', 'history', 'lifecycle',
   'observation', 'recovery', 'resume', 'startup', 'system_edits',
-  'updates', 'windows_registry', 'icons'
+  'updates', 'windows_registry', 'icons', 'update_check'
 )
 $controlled = @{
   cli_observation = 'Uses real HKCU Environment and reg.exe; needs a controlled account'
