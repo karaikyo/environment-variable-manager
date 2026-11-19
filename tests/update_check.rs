@@ -137,6 +137,25 @@ fn newest_can_be_on_later_page_and_order_does_not_determine_version() {
     };
     assert_eq!(found.version(), "0.2.0");
 }
+
+#[test]
+fn github_repository_id_links_are_followed_without_allowing_skipped_pages() {
+    let mut first = response(format!("[{}]", release("0.1.5")));
+    first.link = Some("<https://api.github.com/repositories/1449318990/releases?per_page=100&page=2>; rel=\"next\"".into());
+    let status = check_responses(vec![first, response(format!("[{}]", release("0.3.0")))]);
+    let UpdateStatus::Available(found) = status else {
+        panic!("Expected repository-ID continuation")
+    };
+    assert_eq!(found.version(), "0.3.0");
+    for url in [
+        "https://api.github.com/repositories/1449318991/releases?per_page=100&page=2",
+        "https://api.github.com/repositories/1449318990/releases?per_page=100&page=3",
+    ] {
+        let mut page = response(format!("[{}]", release("0.1.3")));
+        page.link = Some(format!("<{url}>; rel=\"next\""));
+        failed(vec![page]);
+    }
+}
 #[test]
 fn pagination_rejects_cycles_foreign_hosts_and_unbounded_pages() {
     for link in [

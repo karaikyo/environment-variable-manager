@@ -170,7 +170,12 @@ fn version(text: &str) -> Option<[u32; 3]> {
     Some(numbers)
 }
 fn api_page(url: &str) -> Option<u32> {
-    let query = url.strip_prefix(API_BASE)?.strip_prefix('?')?;
+    // GitHub's Link header uses the repository's numeric identity, even when
+    // the original request used owner/name. Accept only this fixed repository.
+    let query = url
+        .strip_prefix(API_BASE)
+        .or_else(|| url.strip_prefix("https://api.github.com/repositories/1449318990/releases"))?
+        .strip_prefix('?')?;
     let mut page = None;
     let mut size = false;
     for parameter in query.split('&') {
@@ -426,7 +431,12 @@ fn check_releases(
             }
         }
         match next_page(response.link.as_deref())? {
-            Some(next) => url = next,
+            Some(next) => {
+                if api_page(&next) != Some(visited.len() as u32 + 1) {
+                    return Err("Release check incomplete: invalid page sequence".into());
+                }
+                url = next;
+            }
             None => break,
         }
     }
