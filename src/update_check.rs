@@ -1,4 +1,5 @@
 //! Explicit, session-only release discovery, independent of environment storage.
+mod windows;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -6,6 +7,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+pub use windows::WindowsTransport;
 pub const MAX_RESPONSE_BYTES: usize = 1_048_576;
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");

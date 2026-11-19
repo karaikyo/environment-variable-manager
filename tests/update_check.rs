@@ -261,3 +261,27 @@ fn retries_clear_previous_release_and_connection_errors_are_visible() {
         &UpdateStatus::Failed("Connection failed; try again".into())
     );
 }
+#[test]
+fn native_transport_rejects_unsafe_urls_and_inactive_checks_without_network() {
+    use environment_variable_manager::update_check::{
+        CheckControl, ReleaseTransport, WindowsTransport, RELEASES_URL,
+    };
+    use std::time::Duration;
+    let transport = WindowsTransport;
+    for url in ["http://api.github.com/repos/karaikyo/environment-variable-manager/releases?per_page=100&page=1", "https://evil.example/releases", "https://api.github.com.evil.example/releases"] {
+        let failure = transport.fetch(url, &CheckControl::new(Duration::from_secs(1))).err().unwrap();
+        assert!(failure.contains("Unsafe"));
+    }
+    let cancelled = CheckControl::new(Duration::from_secs(1));
+    cancelled.cancel();
+    assert!(transport
+        .fetch(RELEASES_URL, &cancelled)
+        .err()
+        .unwrap()
+        .contains("cancelled"));
+    assert!(transport
+        .fetch(RELEASES_URL, &CheckControl::new(Duration::ZERO))
+        .err()
+        .unwrap()
+        .contains("timed out"));
+}
