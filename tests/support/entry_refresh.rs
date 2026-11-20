@@ -1,4 +1,5 @@
 //! Exercise observation while editing through the real window, in an owned child.
+use crate::native_status;
 use environment_variable_manager::{
     desktop,
     startup::{RegistrationState, StartupRegistration},
@@ -14,8 +15,6 @@ use windows_sys::Win32::{
     Foundation::*,
     UI::{Controls::*, Input::KeyboardAndMouse::IsWindowEnabled, WindowsAndMessaging::*},
 };
-#[path = "../../examples/support/native_status.rs"]
-mod native_status;
 
 struct Fixture(Arc<Mutex<String>>);
 impl RegistryReader for Fixture {
@@ -158,7 +157,9 @@ fn startup_path_child() {
         wait(|| {
             window =
                 native_status::find_owned_window("EnvironmentManager.Main", std::process::id());
-            !window.is_null() && IsWindowEnabled(GetDlgItem(window, 152)) != 0
+            !window.is_null()
+                && text(window) == "Environment Manager"
+                && IsWindowEnabled(GetDlgItem(window, 152)) != 0
         });
         let result = std::panic::catch_unwind(|| {
             let checkbox = GetDlgItem(window, 152);
