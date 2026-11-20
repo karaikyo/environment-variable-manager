@@ -15,6 +15,8 @@ use windows_sys::Win32::{
 };
 #[path = "support/entry_refresh.rs"]
 mod entry_refresh;
+#[path = "support/update_check_native.rs"]
+mod update_check_native;
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
