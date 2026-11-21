@@ -6,6 +6,11 @@ release; controlled native acceptance checks remain open.
 
 ## [Unreleased]
 
+### Added
+
+- Manually check for newer Windows x64 releases from the main window and open
+  the matching GitHub release page. Preview releases are included.
+
 ## [0.1.4] - 2026-11-11
 
 ### Changed

@@ -1,4 +1,7 @@
 //! Native list-and-detail window. All HWND state stays on the message-loop thread.
+use crate::update_check::{
+    Release, UpdateChecker, UpdateStatus, WindowsTransport, CURRENT_VERSION,
+};
 use crate::{
     lifecycle::{ExitDecision, Lifecycle},
     native_lifecycle::{self, Tray},
@@ -46,6 +49,36 @@ const STARTUP: usize = 152;
 const CONFIRM_EXIT: usize = 153;
 const CANCEL_EXIT: usize = 154;
 const LOAD_TIMER: usize = 1;
+const UPDATE_TIMER: usize = 2;
+const CHECK_UPDATES: usize = 160;
+const OPEN_RELEASE: usize = 161;
+const UPDATE_STATUS: usize = 162;
+const VERSION: usize = 163;
+
+/// Browser boundary. Only a release validated by the checker can be opened.
+pub trait BrowserOpener {
+    fn open(&self, release: &Release) -> Result<(), String>;
+}
+struct WindowsBrowser;
+impl BrowserOpener for WindowsBrowser {
+    fn open(&self, release: &Release) -> Result<(), String> {
+        let result = unsafe {
+            windows_sys::Win32::UI::Shell::ShellExecuteW(
+                null_mut(),
+                wide("open").as_ptr(),
+                wide(release.url()).as_ptr(),
+                null(),
+                null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if result as usize <= 32 {
+            Err("Cannot open the release page; try again.".into())
+        } else {
+            Ok(())
+        }
+    }
+}
 #[derive(Clone, Copy)]
 enum RefreshKind {
     Live,
@@ -126,12 +159,20 @@ struct WindowState {
     entry: HWND,
     status: HWND,
     buttons: Vec<HWND>,
+    checker: UpdateChecker,
+    browser: Box<dyn BrowserOpener>,
+    update_version: HWND,
+    check_updates: HWND,
+    open_release: HWND,
+    update_status: HWND,
 }
 impl WindowState {
     fn new(
         receiver: Receiver<Response>,
         sender: SyncSender<Work>,
         monitor: std::sync::Arc<std::sync::Mutex<crate::resume::Monitoring>>,
+        checker: UpdateChecker,
+        browser: Box<dyn BrowserOpener>,
     ) -> Self {
         Self {
             lifecycle: Lifecycle::default(),
@@ -171,6 +212,12 @@ impl WindowState {
             entry: null_mut(),
             status: null_mut(),
             buttons: Vec::new(),
+            checker,
+            browser,
+            update_version: null_mut(),
+            check_updates: null_mut(),
+            open_release: null_mut(),
+            update_status: null_mut(),
         }
     }
     unsafe fn create(&mut self, parent: HWND) {
@@ -332,6 +379,39 @@ impl WindowState {
             0,
             0,
         );
+        self.update_version = child(
+            parent,
+            "STATIC",
+            &format!("Version {CURRENT_VERSION}"),
+            0,
+            0,
+            VERSION,
+        );
+        self.check_updates = child(
+            parent,
+            "BUTTON",
+            "Chec&k for updates",
+            WS_TABSTOP,
+            0,
+            CHECK_UPDATES,
+        );
+        self.open_release = child(
+            parent,
+            "BUTTON",
+            "Open release &page",
+            WS_TABSTOP,
+            0,
+            OPEN_RELEASE,
+        );
+        self.update_status = child(
+            parent,
+            "STATIC",
+            "Updates have not been checked.",
+            0,
+            0,
+            UPDATE_STATUS,
+        );
+        self.render_update();
         self.set_font();
         for (id, text) in [
             (ADD, "&Add entry"),
@@ -391,6 +471,10 @@ impl WindowState {
             self.entry_label,
             self.entry,
             self.status,
+            self.update_version,
+            self.check_updates,
+            self.open_release,
+            self.update_status,
         ] {
             SendMessageW(hwnd, WM_SETFONT, self.font as usize, 1);
         }
@@ -415,7 +499,7 @@ impl WindowState {
         let right_x = left + gap;
         let right_w = (width - right_x - margin).max(1);
         let top = margin + label + field + gap;
-        let bottom = (height - scale(156)).max(top + scale(100));
+        let bottom = (height - scale(220)).max(top + scale(100));
         MoveWindow(self.search_label, margin, margin, left - margin, label, 1);
         MoveWindow(self.search, margin, margin + label, left - margin, field, 1);
         MoveWindow(self.filter_label, right_x, margin, scale(200), label, 1);
@@ -515,6 +599,38 @@ impl WindowState {
             margin,
             height - scale(36),
             scale(180),
+            scale(28),
+            1,
+        );
+        MoveWindow(
+            self.update_version,
+            margin,
+            height - scale(104),
+            scale(150),
+            scale(28),
+            1,
+        );
+        MoveWindow(
+            self.check_updates,
+            margin + scale(155),
+            height - scale(104),
+            scale(160),
+            scale(28),
+            1,
+        );
+        MoveWindow(
+            self.open_release,
+            margin + scale(320),
+            height - scale(104),
+            scale(160),
+            scale(28),
+            1,
+        );
+        MoveWindow(
+            self.update_status,
+            margin,
+            height - scale(74),
+            width - 2 * margin,
             scale(28),
             1,
         );
@@ -1039,6 +1155,70 @@ impl WindowState {
             ShowWindow(self.confirm_delete, SW_HIDE);
             ShowWindow(self.cancel_delete, SW_HIDE);
         }
+        self.update_gate();
+    }
+    unsafe fn update_gate(&self) {
+        let active = !self.lifecycle.exit_requested() && !self.lifecycle.confirming();
+        EnableWindow(
+            self.check_updates,
+            (active && !self.checker.is_running()) as i32,
+        );
+        let available = matches!(self.checker.status(), UpdateStatus::Available(_));
+        ShowWindow(self.open_release, if available { SW_SHOW } else { SW_HIDE });
+        EnableWindow(
+            self.open_release,
+            (active && available && !self.checker.is_running()) as i32,
+        );
+    }
+    unsafe fn render_update(&self) {
+        let message = match self.checker.status() {
+            UpdateStatus::Idle => "Updates have not been checked.".into(),
+            UpdateStatus::Checking => "Checking for updates...".into(),
+            UpdateStatus::UpToDate => "Up to date.".into(),
+            UpdateStatus::Available(release) => format!(
+                "New version available: {}. Open the release page to download it.",
+                release.version()
+            ),
+            UpdateStatus::Failed(error) => format!("Check failed: {error}"),
+        };
+        SetWindowTextW(self.update_status, wide(&message).as_ptr());
+        self.update_gate();
+    }
+    unsafe fn check_updates(&mut self, parent: HWND) {
+        if self.lifecycle.exit_requested() || self.lifecycle.confirming() {
+            return;
+        }
+        self.checker.start();
+        self.render_update();
+        if self.checker.is_running() {
+            SetTimer(parent, UPDATE_TIMER, 100, None);
+        }
+    }
+    unsafe fn poll_updates(&mut self, parent: HWND) {
+        if self.checker.poll() {
+            self.render_update();
+        }
+        if self.lifecycle.exit_requested() && !self.lifecycle.confirming() {
+            self.request_exit(parent);
+        } else if !self.checker.is_running() {
+            KillTimer(parent, UPDATE_TIMER);
+        }
+    }
+    unsafe fn open_release(&mut self) {
+        if self.lifecycle.exit_requested()
+            || self.lifecycle.confirming()
+            || self.checker.is_running()
+        {
+            return;
+        }
+        if let UpdateStatus::Available(release) = self.checker.status() {
+            if self.browser.open(release).is_err() {
+                SetWindowTextW(
+                    self.update_status,
+                    wide("Cannot open the release page; try again.").as_ptr(),
+                );
+            }
+        }
     }
     unsafe fn edited(&mut self) {
         if self.filling {
@@ -1396,6 +1576,7 @@ impl WindowState {
         );
     }
     unsafe fn exit_prompt(&mut self) {
+        self.update_gate();
         ShowWindow(self.confirm_exit, SW_SHOW);
         ShowWindow(self.cancel_exit, SW_SHOW);
         ShowWindow(self.exit, SW_HIDE);
@@ -1423,6 +1604,17 @@ impl WindowState {
         );
     }
     unsafe fn finish_exit(&mut self, parent: HWND) {
+        self.checker.cancel();
+        self.checker.poll();
+        self.update_gate();
+        if self.checker.is_running() {
+            SetWindowTextW(
+                self.update_status,
+                wide("Stopping update check before exit...").as_ptr(),
+            );
+            SetTimer(parent, UPDATE_TIMER, 100, None);
+            return;
+        }
         crate::history_window::close_all();
         if !crate::history_window::workers_settled() {
             self.reopen(parent);
@@ -1433,6 +1625,7 @@ impl WindowState {
             return;
         }
         KillTimer(parent, LOAD_TIMER);
+        KillTimer(parent, UPDATE_TIMER);
         DestroyWindow(parent);
         PostQuitMessage(0);
     }
@@ -1613,6 +1806,10 @@ unsafe extern "system" fn window_proc(
             state.loaded(hwnd);
             0
         }
+        WM_TIMER if wparam == UPDATE_TIMER => {
+            state.poll_updates(hwnd);
+            0
+        }
         WM_POWERBROADCAST => {
             let recognized = state.monitor.lock().unwrap().power_event(wparam as u32);
             if recognized {
@@ -1636,6 +1833,14 @@ unsafe extern "system" fn window_proc(
             let event = (wparam >> 16) & 0xffff;
             if event == BN_CLICKED as usize {
                 match id {
+                    CHECK_UPDATES => {
+                        state.check_updates(hwnd);
+                        return 0;
+                    }
+                    OPEN_RELEASE => {
+                        state.open_release();
+                        return 0;
+                    }
                     native_lifecycle::EXIT => {
                         state.request_exit(hwnd);
                         return 0;
@@ -1740,6 +1945,8 @@ unsafe extern "system" fn window_proc(
         }
         WM_DESTROY => {
             KillTimer(hwnd, LOAD_TIMER);
+            KillTimer(hwnd, UPDATE_TIMER);
+            state.checker.cancel();
             PostQuitMessage(0);
             0
         }
@@ -1770,6 +1977,26 @@ pub fn run_with_startup(
     registration: impl StartupRegistration + Send + 'static,
     executable: PathBuf,
     start_in_tray: bool,
+) -> Result<(), String> {
+    run_with_services(
+        reader,
+        data_directory,
+        registration,
+        executable,
+        start_in_tray,
+        UpdateChecker::new(std::sync::Arc::new(WindowsTransport)),
+        WindowsBrowser,
+    )
+}
+/// Owned fixtures inject network and browser boundaries; no request starts on construction.
+pub fn run_with_services(
+    reader: impl RegistryWriter + Send + 'static,
+    data_directory: PathBuf,
+    registration: impl StartupRegistration + Send + 'static,
+    executable: PathBuf,
+    start_in_tray: bool,
+    checker: UpdateChecker,
+    browser: impl BrowserOpener + 'static,
 ) -> Result<(), String> {
     crate::system_libraries::init_controls()?;
     let (sender, receiver) = sync_channel(1);
@@ -1917,6 +2144,8 @@ pub fn run_with_startup(
         receiver,
         work_sender,
         monitor,
+        checker,
+        Box::new(browser),
     )));
     let result = unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);

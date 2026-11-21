@@ -8,6 +8,7 @@ pub mod resume;
 pub mod startup;
 mod storage;
 mod system_libraries;
+pub mod update_check;
 mod windows_startup;
 use std::path::{Path, PathBuf};
 use windows_sys::Win32::Globalization::{CompareStringOrdinal, CSTR_EQUAL};

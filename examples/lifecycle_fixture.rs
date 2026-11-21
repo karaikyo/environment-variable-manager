@@ -17,6 +17,8 @@ use windows_sys::Win32::{
 };
 #[path = "support/native_status.rs"]
 mod native_status;
+#[path = "support/update_benchmark.rs"]
+mod update_benchmark;
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
@@ -101,6 +103,7 @@ fn main() {
     let directory = PathBuf::from(args.get(1).expect("Use a fresh disposable directory"));
     let release_benchmark = args.iter().any(|a| a == "--release-benchmark");
     let long_run = args.iter().any(|a| a == "--long-run");
+    let update_benchmark = args.iter().any(|a| a == "--update-benchmark");
     let diagnose_status = args.iter().any(|a| a == "--diagnose-status");
     let diagnose_refresh = args.iter().any(|a| a == "--diagnose-refresh");
     assert!(
@@ -178,6 +181,8 @@ fn main() {
     std::fs::write(directory.join("fixture.txt"),format!("root={root}\nvariables=200\nentries=2000\nhistory=10000\nprocesses=1\nlogical_cpus={}\n",std::thread::available_parallelism().unwrap())).unwrap();
     let output = directory.clone();
     let thread_root = root.clone();
+    let update_transport = std::sync::Arc::new(update_benchmark::Transport::default());
+    let exercise_transport = update_transport.clone();
     let exercise = std::thread::spawn(move || {
         let mut main = null_mut();
         let result = (|| -> Result<(), String> {
@@ -283,7 +288,27 @@ fn main() {
             if long_run {
                 phases.push("longer_run");
             }
+            if update_benchmark {
+                phases = vec![
+                    "initial",
+                    "after_success",
+                    "after_repeated",
+                    "after_failure",
+                ];
+            }
             for phase in phases {
+                if update_benchmark && phase != "initial" {
+                    let attempts = if phase == "after_success" { 1 } else { 2 };
+                    for attempt in 1..=attempts {
+                        let measurement = update_benchmark::check(
+                            main,
+                            &exercise_transport,
+                            phase == "after_failure",
+                        )?;
+                        summary.push_str(&format!("{phase}_{attempt}={measurement}\n"));
+                        std::fs::write(output.join("result.txt"), &summary).unwrap();
+                    }
+                }
                 if release_benchmark && phase == "after_simulated_resume" {
                     unsafe {
                         SendMessageW(main, WM_POWERBROADCAST, PBT_APMSUSPEND as usize, 0);
@@ -460,13 +485,20 @@ fn main() {
         }
         result
     });
-    let outcome = desktop::run_with_startup(
-        registry,
-        data,
-        registration,
-        std::env::current_exe().unwrap(),
-        false,
-    );
+    let executable = std::env::current_exe().unwrap();
+    let outcome = if update_benchmark {
+        desktop::run_with_services(
+            registry,
+            data,
+            registration,
+            executable,
+            false,
+            environment_variable_manager::update_check::UpdateChecker::new(update_transport),
+            update_benchmark::NoBrowser,
+        )
+    } else {
+        desktop::run_with_startup(registry, data, registration, executable, false)
+    };
     let exercise_result = exercise.join().unwrap();
     outcome.unwrap();
     let registration =
