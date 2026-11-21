@@ -30,7 +30,10 @@ post-check memory contribution in product acceptance.
 
 Only this project's API path (including its exact numeric repository-ID alias)
 is accepted. Continuations must advance by one page and are reconstructed as
-canonical requests. TLS verification is enabled; redirects, authentication,
+canonical requests. Advertised last-page information must remain consistent;
+missing continuations before that page, duplicate relations and last pages beyond
+the page budget fail the check rather than claiming a complete result.
+TLS verification is enabled; redirects, authentication,
 automatic credential forwarding and cookies are disabled. HTTP errors are not
 parsed as release lists. Missing/incomplete/oversized results cannot claim Up to
 date. Release eligibility includes published previews with the expected uploaded

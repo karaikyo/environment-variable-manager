@@ -203,14 +203,20 @@ fn api_page(url: &str) -> Option<u32> {
 pub(crate) fn valid_api_url(url: &str) -> bool {
     api_page(url).is_some()
 }
-fn next_page(link: Option<&str>) -> Result<Option<String>, String> {
+#[derive(Default)]
+struct PageLinks {
+    next: Option<u32>,
+    last: Option<u32>,
+}
+fn page_links(link: Option<&str>) -> Result<PageLinks, String> {
     let Some(link) = link else {
-        return Ok(None);
+        return Ok(PageLinks::default());
     };
     if link.is_empty() || link.len() > 8192 {
         return Err("Invalid release pagination".into());
     }
-    let mut next = None;
+    let mut links = PageLinks::default();
+    let mut relations = Vec::new();
     for segment in link.split(',') {
         let (address, relation) = segment
             .trim()
@@ -222,15 +228,19 @@ fn next_page(link: Option<&str>) -> Result<Option<String>, String> {
             .and_then(|s| s.strip_suffix('>'))
             .ok_or("Invalid release pagination")?;
         let page = api_page(url).ok_or("Unsafe release pagination")?;
-        match relation.trim() {
-            "rel=\"next\"" if next.is_none() => {
-                next = Some(format!("{API_BASE}?per_page=100&page={page}"))
-            }
-            "rel=\"prev\"" | "rel=\"first\"" | "rel=\"last\"" => {}
+        let relation = relation.trim();
+        if relations.contains(&relation) {
+            return Err("Ambiguous release pagination".into());
+        }
+        relations.push(relation);
+        match relation {
+            "rel=\"next\"" => links.next = Some(page),
+            "rel=\"last\"" => links.last = Some(page),
+            "rel=\"prev\"" | "rel=\"first\"" => {}
             _ => return Err("Invalid release pagination".into()),
         }
     }
-    Ok(next)
+    Ok(links)
 }
 fn malformed(_: rusqlite::Error) -> String {
     "Invalid release metadata".into()
@@ -401,6 +411,7 @@ fn check_releases(
     let mut visited = Vec::new();
     let mut total = 0usize;
     let mut newest: Option<([u32; 3], Release)> = None;
+    let mut advertised_last = None;
     loop {
         control.check()?;
         if !valid_api_url(&url) || visited.contains(&url) {
@@ -427,17 +438,35 @@ fn check_releases(
         if response.body.len() > MAX_RESPONSE_BYTES || total > MAX_TOTAL_BYTES {
             return Err("Release response exceeds limit".into());
         }
+        let links = page_links(response.link.as_deref())?;
+        let current_page = visited.len() as u32;
+        if let Some(last) = links.last {
+            if last > MAX_PAGES as u32 {
+                return Err("Release check incomplete: page limit reached".into());
+            }
+            if last < current_page || advertised_last.is_some_and(|known| known != last) {
+                return Err("Release check incomplete: inconsistent last page".into());
+            }
+            advertised_last = Some(last);
+        }
+        if let Some(next) = links.next {
+            if next != current_page + 1 || advertised_last.is_some_and(|last| next > last) {
+                return Err("Release check incomplete: invalid page sequence".into());
+            }
+            if next > MAX_PAGES as u32 {
+                return Err("Release check incomplete: page limit reached".into());
+            }
+        } else if advertised_last.is_some_and(|last| current_page < last) {
+            return Err("Release check incomplete: missing next page".into());
+        }
         for release in page_releases(&response.body, control)? {
             if newest.as_ref().is_none_or(|current| release.0 > current.0) {
                 newest = Some(release);
             }
         }
-        match next_page(response.link.as_deref())? {
+        match links.next {
             Some(next) => {
-                if api_page(&next) != Some(visited.len() as u32 + 1) {
-                    return Err("Release check incomplete: invalid page sequence".into());
-                }
-                url = next;
+                url = format!("{API_BASE}?per_page=100&page={next}");
             }
             None => break,
         }

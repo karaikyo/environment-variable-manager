@@ -285,3 +285,132 @@ fn native_transport_rejects_unsafe_urls_and_inactive_checks_without_network() {
         .unwrap()
         .contains("timed out"));
 }
+
+fn linked_page(next: Option<u32>, last: Option<u32>) -> HttpResponse {
+    let mut reply = response(format!("[{}]", release(CURRENT_VERSION)));
+    let mut links = Vec::new();
+    for (relation, page) in [("next", next), ("last", last)] {
+        if let Some(page) = page {
+            links.push(format!(
+                "<{}>; rel=\"{relation}\"",
+                RELEASES_URL.replace("&page=1", &format!("&page={page}"))
+            ));
+        }
+    }
+    reply.link = (!links.is_empty()).then(|| links.join(", "));
+    reply
+}
+
+#[test]
+fn advertised_last_page_cannot_be_silently_skipped() {
+    failed(vec![linked_page(None, Some(2))]);
+    failed(vec![linked_page(Some(2), Some(3)), linked_page(None, None)]);
+    assert_eq!(
+        check_responses(vec![
+            linked_page(Some(2), Some(3)),
+            linked_page(Some(3), None),
+            linked_page(None, None)
+        ]),
+        UpdateStatus::UpToDate
+    );
+}
+
+#[test]
+fn conflicting_duplicate_and_over_budget_last_links_fail_before_more_requests() {
+    for (first, expected_remaining) in [
+        (linked_page(Some(2), Some(6)), 1),
+        (
+            {
+                let mut page = linked_page(Some(2), Some(2));
+                page.link.as_mut().unwrap().push_str(&format!(
+                    ", <{}>; rel=\"last\"",
+                    RELEASES_URL.replace("&page=1", "&page=2")
+                ));
+                page
+            },
+            1,
+        ),
+        (
+            {
+                let mut page = linked_page(Some(2), Some(2));
+                page.link.as_mut().unwrap().push_str(&format!(
+                    ", <{}>; rel=\"last\"",
+                    RELEASES_URL.replace("&page=1", "&page=3")
+                ));
+                page
+            },
+            1,
+        ),
+    ] {
+        let replies = Arc::new(Replies(Mutex::new(vec![first, linked_page(None, None)])));
+        let mut checker = UpdateChecker::new(replies.clone());
+        assert!(checker.start());
+        finish(&mut checker);
+        assert!(
+            matches!(checker.status(), UpdateStatus::Failed(_)),
+            "Ambiguous or over-budget list cannot be up to date"
+        );
+        assert_eq!(
+            replies.0.lock().unwrap().len(),
+            expected_remaining,
+            "Reject before another fetch"
+        );
+    }
+    failed(vec![
+        linked_page(Some(2), Some(3)),
+        linked_page(None, Some(2)),
+    ]);
+}
+
+#[test]
+fn whole_check_deadline_expires_and_a_following_manual_retry_succeeds() {
+    struct TimeoutThenSuccess(std::sync::atomic::AtomicUsize);
+    impl ReleaseTransport for TimeoutThenSuccess {
+        fn fetch(&self, _: &str, control: &CheckControl) -> Result<HttpResponse, String> {
+            if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                loop {
+                    control.check()?;
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+            Ok(response(format!("[{}]", release(CURRENT_VERSION))))
+        }
+    }
+    let mut checker = UpdateChecker::new(Arc::new(TimeoutThenSuccess(
+        std::sync::atomic::AtomicUsize::new(0),
+    )));
+    let started = Instant::now();
+    assert!(checker.start());
+    while checker.is_running() {
+        checker.poll();
+        assert!(
+            started.elapsed() < CHECK_TIMEOUT + Duration::from_secs(3),
+            "Deadline did not settle the public check"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(started.elapsed() >= CHECK_TIMEOUT);
+    assert!(matches!(checker.status(),UpdateStatus::Failed(error) if error.contains("timed out")));
+    assert!(checker.start());
+    finish(&mut checker);
+    assert_eq!(checker.status(), &UpdateStatus::UpToDate);
+}
+
+#[test]
+fn prepared_dns_and_certificate_failures_remain_explicit_failures() {
+    struct Failure(&'static str);
+    impl ReleaseTransport for Failure {
+        fn fetch(&self, _: &str, _: &CheckControl) -> Result<HttpResponse, String> {
+            Err(self.0.into())
+        }
+    }
+    for message in [
+        "Cannot resolve GitHub; check your connection and try again",
+        "GitHub HTTPS certificate validation failed",
+    ] {
+        let mut checker = UpdateChecker::new(Arc::new(Failure(message)));
+        assert!(checker.start());
+        finish(&mut checker);
+        assert_eq!(checker.status(), &UpdateStatus::Failed(message.into()));
+    }
+}
