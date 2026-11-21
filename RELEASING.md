@@ -1,4 +1,4 @@
-# Continuous integration and automated preview releases
+# Continuous integration and automated releases
 
 Every push to `main` and pull request targeting `main` runs Windows CI: Rust formatting,
 Clippy, a safety-reviewed list of headless integration suites, and packaging checks.
@@ -48,5 +48,6 @@ To publish a future version:
    and commit/push main. Wait for the normal CI checks.
 2. Run the workflow manually and check its result.
 3. Create and push the matching tag: git tag v0.1.3, then git push origin v0.1.3.
-4. Check the workflow and Releases page. Releases are previews by default; promote
-   a release only after the relevant acceptance checks.
+4. Check the workflow and Releases page. Tags default to preview. To authorize a
+   full release, set the publish job's FULL_RELEASE_TAG to that exact tag in the
+   release preparation commit. The workflow publishes that version as Latest.

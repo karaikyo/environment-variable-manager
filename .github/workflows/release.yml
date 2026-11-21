@@ -72,6 +72,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   publish:
+    env:
+      # Only a tag explicitly selected for a full release is published as Latest.
+      FULL_RELEASE_TAG: v0.1.5
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
@@ -95,8 +98,10 @@ jobs:
           cd release-assets
           sha256sum --check ./*.sha256
           cd ..
-          python3 scripts/ci-release-notes.py --tag "$RELEASE_TAG" --changelog CHANGELOG.md --output release-notes.md
-      - name: Publish preview release
+          options=()
+          if [[ "$RELEASE_TAG" == "$FULL_RELEASE_TAG" ]]; then options+=(--full-release); fi
+          python3 scripts/ci-release-notes.py --tag "$RELEASE_TAG" --changelog CHANGELOG.md --output release-notes.md "${options[@]}"
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -104,4 +109,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$RELEASE_TAG" release-assets/*.zip release-assets/*.sha256 --verify-tag --title "$RELEASE_TAG (Preview)" --prerelease --notes-file release-notes.md
+          options=(--title "$RELEASE_TAG (Preview)" --prerelease)
+          if [[ "$RELEASE_TAG" == "$FULL_RELEASE_TAG" ]]; then options=(--title "$RELEASE_TAG" --latest); fi
+          gh release create "$RELEASE_TAG" release-assets/*.zip release-assets/*.sha256 --verify-tag "${options[@]}" --notes-file release-notes.md

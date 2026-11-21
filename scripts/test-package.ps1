@@ -27,5 +27,5 @@ $exe = Join-Path $extract 'environment-variable-manager.exe'
 if ((Get-FileHash -LiteralPath $exe).Hash -ne (Get-FileHash -LiteralPath (Join-Path $root 'target/x86_64-pc-windows-msvc/release/environment-variable-manager.exe')).Hash) { throw 'Extracted executable differs from release build' }
 $version = Get-Content -LiteralPath (Join-Path $extract 'VERSION.txt') -Raw
 $expectedVersion = [regex]::Match((Get-Content -LiteralPath (Join-Path $root 'Cargo.toml') -Raw), '(?m)^version = "([0-9.]+)"\r?$').Groups[1].Value
-if (-not $expectedVersion -or -not $version.Contains("Environment Manager $expectedVersion") -or $version -notmatch 'Windows 11 x64' -or $version -notmatch 'candidate') { throw 'Version/platform/candidate status missing' }
+if (-not $expectedVersion -or -not $version.Contains("Environment Manager $expectedVersion") -or $version -notmatch 'Windows 11 x64' -or $version -notmatch '(?m)^Manual acceptance:') { throw 'Version/platform/acceptance information missing' }
 Write-Output "Package contract passed: $($archives[0].FullName)"

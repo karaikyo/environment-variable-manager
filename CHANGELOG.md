@@ -6,6 +6,8 @@ release; controlled native acceptance checks remain open.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-21
+
 ### Added
 
 - Manually check for newer Windows x64 releases from the main window and open

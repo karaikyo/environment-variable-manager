@@ -28,7 +28,7 @@ $dirty = [bool](git -C $root status --porcelain --untracked-files=normal)
 @"
 Environment Manager $version
 Platform: Windows 11 x64
-Status: local release candidate; manual acceptance checks pending
+Manual acceptance: see RUN-UPDATE.md and release notes for this build.
 Source revision: $revision
 Uncommitted source changes: $dirty
 Build: release, bundled SQLite, static C runtime, offline dependencies

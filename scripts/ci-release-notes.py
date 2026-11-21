@@ -9,6 +9,7 @@ import subprocess
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tag", required=True)
+    parser.add_argument("--full-release", action="store_true")
     parser.add_argument("--changelog", type=pathlib.Path, required=True)
     parser.add_argument("--output", type=pathlib.Path, required=True)
     args = parser.parse_args()
@@ -30,10 +31,10 @@ def main():
         parser.error(f"empty changelog section for {version}")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     notes = (
-        f"## Environment Manager {args.tag} (Preview)\n\n"
+        f"## Environment Manager {args.tag}{'' if args.full_release else ' (Preview)'}\n\n"
         f"{details}\n\n"
         "### Download and update\n\n"
-        "Portable Windows 11 x64 preview. Extract into a writable folder and launch "
+        "Portable Windows 11 x64 application. Extract into a writable folder and launch "
         "`environment-variable-manager.exe`. Exit the running application before "
         "updating; preserve `data/` when replacing application files.\n\n"
         "### Verification and source\n\n"
